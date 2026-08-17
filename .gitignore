@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+
+# personal backups exported from the app — never publish these
+attune-backup*.json
+attune-export*.json
