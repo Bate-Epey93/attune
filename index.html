@@ -409,7 +409,8 @@ h4 { font-size: 1.08rem; font-weight: 600; }
   border: 1px solid transparent;
   color: var(--text-faint);
   font-family: var(--font-body);
-  font-size: 0.62rem;
+  /* six tabs on a 375px screen: the label has to survive ~54px of width */
+  font-size: 0.56rem;
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -418,7 +419,8 @@ h4 { font-size: 1.08rem; font-weight: 600; }
   background: transparent;
   transition: color 0.15s ease, background 0.15s ease, transform 0.12s ease;
 }
-.nav-item svg { width: 26px; height: 26px; }
+.nav-item svg { width: 24px; height: 24px; }
+.nav-item { min-width: 0; overflow: hidden; white-space: nowrap; }
 .nav-item:active { transform: scale(0.94); }
 .nav-item.active {
   color: var(--accent-text);
@@ -566,6 +568,37 @@ button.pill-x {
 .pattern-note { display: flex; gap: 10px; padding: 7px 0; font-size: 0.95rem; }
 .pattern-note .row-glyph { width: 22px; height: 22px; margin-top: 1px; }
 .pms-frame { border-left: 2px solid var(--accent-line); padding-left: 12px; margin: 10px 0 2px; color: var(--text-dim); font-style: italic; }
+
+/* ---------- moon + long distance ---------- */
+.moon-disc { display: block; flex: none; }
+.moon-shadow { fill: rgba(255, 255, 255, 0.05); }
+.moon-lit { fill: var(--washi, #EDE7DA); opacity: 0.92; }
+.moon-rim { fill: none; stroke: rgba(var(--accent-rgb), 0.30); stroke-width: 1.5; }
+
+.moon-hero { display: flex; align-items: center; gap: 16px; }
+
+.moon-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 14px 16px;
+}
+.moon-strip > div:nth-child(2) { flex: 1; min-width: 0; }
+.moon-strip:active { transform: scale(0.99); }
+
+.copy-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--hairline, rgba(255, 255, 255, 0.08));
+}
+.copy-row:first-of-type { border-top: none; }
+.copy-text { flex: 1; min-width: 0; font-size: 0.95rem; line-height: 1.45; color: var(--text-dim); }
+.copy-btn { flex: none; align-self: center; }
 
 /* ---------- map ---------- */
 .map-svg { width: 100%; height: auto; display: block; }
@@ -1008,7 +1041,7 @@ button.pill-x {
   // the real last-period date is one tap away on Today.
   function seedState() {
     return {
-      settings: { cycleLength: 26.5, periodLength: 6, lutealLength: 14 },
+      settings: { cycleLength: 26.5, periodLength: 6, lutealLength: 14, herTimeZone: '' },
       profile: {
         name: '',
         patterns: [
@@ -1315,6 +1348,8 @@ button.pill-x {
     ['cycleLength', 'periodLength', 'lutealLength'].forEach(function (k) {
       if (!isFinite(settings[k]) || settings[k] <= 0) fail('settings.' + k + ' must be a positive number');
     });
+    // optional: IANA zone name for where she is, '' when unset
+    settings.herTimeZone = typeof st.herTimeZone === 'string' ? st.herTimeZone : '';
 
     var pr = raw.profile;
     if (pr === null || typeof pr !== 'object') fail('missing profile object');
@@ -1460,6 +1495,177 @@ button.pill-x {
     moodCurve: moodCurve
   };
 
+})(typeof window !== 'undefined' ? window : globalThis);
+
+/* ============================================================================
+   AttuneMoon — lunar phase math and cycle-to-moon alignment.
+
+   The astronomy here is real: mean synodic month from a known new-moon epoch,
+   good to a few hours, computed offline from the local calendar date. What the
+   app builds on top of it — inner-moon archetypes, the White/Red moon naming —
+   is symbolic framing, and the UI says so. Large studies (including a 1.5M
+   cycle dataset) find no reliable synchrony between menstrual cycles and the
+   moon, so nothing here predicts anything. It is a language for the phase she
+   is already in, not a claim about what put her there.
+   ========================================================================== */
+(function (root) {
+  'use strict';
+
+  var SYNODIC = 29.530588853;   // mean synodic month, days
+  var EPOCH_JD = 2451550.1;     // new moon, 2000-01-06 18:14 UTC
+  var FULL_AGE = SYNODIC / 2;   // 14.765…
+
+  var PHASES = [
+    { key: 'new', label: 'New moon', max: 1.0 },
+    { key: 'waxingCrescent', label: 'Waxing crescent', max: 6.38 },
+    { key: 'firstQuarter', label: 'First quarter', max: 8.38 },
+    { key: 'waxingGibbous', label: 'Waxing gibbous', max: 13.77 },
+    { key: 'full', label: 'Full moon', max: 15.77 },
+    { key: 'waningGibbous', label: 'Waning gibbous', max: 21.15 },
+    { key: 'lastQuarter', label: 'Last quarter', max: 23.15 },
+    { key: 'waningCrescent', label: 'Waning crescent', max: 28.53 },
+    { key: 'new', label: 'New moon', max: SYNODIC }
+  ];
+
+  // Contemporary moon-cycle naming (Miranda Gray and the traditions that
+  // followed her). Bucketed by the moon's age on the day her bleed began.
+  var ALIGNMENTS = [
+    { key: 'white', min: 25.8, max: SYNODIC },
+    { key: 'white', min: 0, max: 3.7 },
+    { key: 'pink', min: 3.7, max: 11.1 },
+    { key: 'red', min: 11.1, max: 18.4 },
+    { key: 'purple', min: 18.4, max: 25.8 }
+  ];
+
+  var DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+  // local noon of the calendar day, so a date maps to one stable moon age
+  function jdOf(dateStr) {
+    var m = DATE_RE.exec(String(dateStr));
+    if (!m) throw new Error('AttuneMoon: bad date "' + dateStr + '"');
+    return Date.UTC(+m[1], +m[2] - 1, +m[3], 12, 0, 0) / 86400000 + 2440587.5;
+  }
+
+  var RAD = Math.PI / 180;
+
+  /* Meeus, Astronomical Algorithms ch.49 — truncated new/full moon series.
+     A plain mean-synodic count drifts up to ~14 hours off the real sky, which
+     is enough to name the wrong night for a full moon. These terms bring it
+     back to a few minutes, and it is all local arithmetic. */
+  function quarterJD(k, full) {
+    var T = k / 1236.85;
+    var T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+    var jde = 2451550.09766 + 29.530588861 * k + 0.00015437 * T2 - 0.000000150 * T3 + 0.00000000073 * T4;
+    var E = 1 - 0.002516 * T - 0.0000074 * T2;
+    var M = (2.5534 + 29.10535670 * k - 0.0000014 * T2 - 0.00000011 * T3) * RAD;          // sun, mean anomaly
+    var Mp = (201.5643 + 385.81693528 * k + 0.0107582 * T2 + 0.00001238 * T3) * RAD;      // moon, mean anomaly
+    var F = (160.7108 + 390.67050284 * k - 0.0016118 * T2 - 0.00000227 * T3) * RAD;       // argument of latitude
+    var c = full
+      ? (-0.40614 * Math.sin(Mp) + 0.17302 * E * Math.sin(M) + 0.01614 * Math.sin(2 * Mp) +
+         0.01043 * Math.sin(2 * F) + 0.00734 * E * Math.sin(Mp - M) - 0.00515 * E * Math.sin(Mp + M) +
+         0.00209 * E * E * Math.sin(2 * M) - 0.00111 * Math.sin(Mp - 2 * F) - 0.00057 * Math.sin(Mp + 2 * F))
+      : (-0.40720 * Math.sin(Mp) + 0.17241 * E * Math.sin(M) + 0.01608 * Math.sin(2 * Mp) +
+         0.01039 * Math.sin(2 * F) + 0.00739 * E * Math.sin(Mp - M) - 0.00514 * E * Math.sin(Mp + M) +
+         0.00208 * E * E * Math.sin(2 * M) - 0.00111 * Math.sin(Mp - 2 * F) - 0.00057 * Math.sin(Mp + 2 * F));
+    return jde + c;
+  }
+
+  function newMoonJD(k) { return quarterJD(k, false); }
+  function fullMoonJD(k) { return quarterJD(k + 0.5, true); }
+
+  // lunation index whose new moon is the last one on or before jd
+  function lunationAt(jd) {
+    var k = Math.floor((jd - 2451545.0) / 365.25 * 12.3685);
+    while (newMoonJD(k) > jd) k -= 1;
+    while (newMoonJD(k + 1) <= jd) k += 1;
+    return k;
+  }
+
+  function ageOf(dateStr) {
+    var jd = jdOf(dateStr);
+    return jd - newMoonJD(lunationAt(jd));
+  }
+
+  function phaseOf(dateStr) {
+    var age = ageOf(dateStr);
+    var band = PHASES[PHASES.length - 1];
+    for (var i = 0; i < PHASES.length; i++) {
+      if (age < PHASES[i].max) { band = PHASES[i]; break; }
+    }
+    return {
+      age: age,
+      cycleFraction: age / SYNODIC,
+      illumination: (1 - Math.cos(2 * Math.PI * age / SYNODIC)) / 2,
+      waxing: age < FULL_AGE,
+      key: band.key,
+      label: band.label
+    };
+  }
+
+  // whole days until the next new/full moon, counting today as 0
+  function daysUntil(dateStr, target) {
+    var jd = jdOf(dateStr);
+    var k = lunationAt(jd);
+    // compare in whole days so "full moon tonight" survives the ±12h that
+    // separates a local-noon anchor from the exact instant of the phase
+    var next = target === 'full' ? fullMoonJD(k) : newMoonJD(k + 1);
+    var d = Math.round(next - jd);
+    if (d < 0) {
+      next = target === 'full' ? fullMoonJD(k + 1) : newMoonJD(k + 2);
+      d = Math.round(next - jd);
+    }
+    return d;
+  }
+
+  function keyForAge(age) {
+    for (var i = 0; i < ALIGNMENTS.length; i++) {
+      if (age >= ALIGNMENTS[i].min && age < ALIGNMENTS[i].max) return ALIGNMENTS[i].key;
+    }
+    return 'white';
+  }
+
+  function alignmentKey(startDateStr) { return keyForAge(ageOf(startDateStr)); }
+
+  // Her cycle and the moon's run at different lengths, so the moon age her
+  // bleed lands on walks by (cycleLength - 29.53) days every cycle. This is
+  // the honest version of "syncing": a drift, and a countable one.
+  function drift(startDateStr, cycleLength) {
+    var per = Number(cycleLength) - SYNODIC;      // negative = walks backwards
+    var age = ageOf(startDateStr);
+    var out = { perCycle: per, startAge: age, nextChange: null, cyclesToReturn: null };
+    if (!isFinite(per) || Math.abs(per) < 0.05) return out;      // effectively locked
+    var here = keyForAge(age);
+    for (var n = 1; n <= 200; n++) {
+      var a = ((age + per * n) % SYNODIC + SYNODIC) % SYNODIC;
+      var k = keyForAge(a);
+      if (!out.nextChange && k !== here) out.nextChange = { cycles: n, key: k };
+      if (out.nextChange && k === here) { out.cyclesToReturn = n; break; }
+    }
+    return out;
+  }
+
+  /* SVG path for a moon disc of radius R at a given cycle fraction (0 = new,
+     0.5 = full). Lit limb on the right while waxing, northern-hemisphere. */
+  function discPath(R, cycleFraction) {
+    var k = Math.cos(2 * Math.PI * cycleFraction);   // 1 at new, -1 at full
+    var rx = Math.abs(k) * R;
+    var waxing = cycleFraction < 0.5;
+    var outer = waxing ? 1 : 0;
+    var inner = ((k > 0) === waxing) ? 0 : 1;
+    var r = function (n) { return Math.round(n * 100) / 100; };
+    return 'M0,' + r(-R) + ' A' + r(R) + ',' + r(R) + ' 0 0,' + outer + ' 0,' + r(R) +
+      ' A' + r(rx) + ',' + r(R) + ' 0 0,' + inner + ' 0,' + r(-R) + ' Z';
+  }
+
+  root.AttuneMoon = {
+    SYNODIC: SYNODIC,
+    ageOf: ageOf,
+    phaseOf: phaseOf,
+    daysUntil: daysUntil,
+    alignmentKey: alignmentKey,
+    drift: drift,
+    discPath: discPath
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 
@@ -2474,6 +2680,237 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
 
 
 /* ============================================================================
+   Attune content — the moon layer and the long-distance layer.
+
+   Two things live here because they are read together: the symbolic moon
+   framing for each cycle phase, and what you can actually do from another
+   country. Messages are written to be sent as-is; acts are things that can be
+   arranged from a phone in a different timezone.
+   ========================================================================== */
+window.ATTUNE_MOON_CONTENT = {
+
+  /* the standing note the Moon screen shows above everything else */
+  framing: 'Traditional framing, not a prediction. Large studies find no reliable link between the moon and menstrual cycles — her body is not following the sky. What this section gives you is a language for the phase she is already in, and a shared object in the sky when you are in different countries.',
+
+  /* cycle phase → inner moon archetype */
+  archetypes: {
+    menstrual: {
+      moon: 'Dark moon',
+      title: 'Her dark moon',
+      body: 'The old cycle is being let go of. In the sky this is the night with no moon at all — nothing to see, everything underground. Rest is not a break from the work; this week it is the work.',
+      invitation: 'Nothing is asked of the dark but rest.',
+      affirmations: [
+        'You are not behind on anything. This is the dark of the moon, and nothing is asked of the dark but rest.',
+        'Let it fall away. Whatever you set down this week, you don’t have to carry into the new moon.',
+        'Your body is doing something old and thorough. You’re allowed to be slow while it does.',
+        'Nothing about you needs fixing today. You’re in the part of the cycle that empties, and emptying is the work.',
+        'I’m not going anywhere while you rest. Take the whole week if you need it.'
+      ]
+    },
+    follicular: {
+      moon: 'Waxing crescent',
+      title: 'Her waxing crescent',
+      body: 'First light back. Estrogen climbing, energy and appetite for plans returning. In the old framing this is the sowing stretch — the part of the month with the most room in it.',
+      invitation: 'Start the thing. It doesn’t have to be finished this month.',
+      affirmations: [
+        'The light is coming back to you. You don’t have to rush it — it rises on its own.',
+        'This is your sowing week. Plant it small; it has the whole month to grow.',
+        'You’re allowed to want things again.',
+        'Whatever felt impossible last week is just a task again. That wasn’t weakness, it was the dark moon.',
+        'I love watching you come back to yourself.'
+      ]
+    },
+    ovulation: {
+      moon: 'Full moon',
+      title: 'Her full moon',
+      body: 'Peak estrogen with a testosterone bump — the most outward, magnetic, sociable stretch of her month. In the sky, the night everything is visible.',
+      invitation: 'Be seen. This is the week for it.',
+      affirmations: [
+        'You’re at full moon. Go be seen — the room is lucky to have you in it.',
+        'Everything about you is turned up this week. That isn’t too much; that’s the phase you’re in.',
+        'I wish I were in the room. You’re at your most magnetic right now and I know it from here.',
+        'Say yes to the thing. This is the week your energy can carry it.',
+        'You are lit all the way through right now.'
+      ]
+    },
+    earlyLuteal: {
+      moon: 'Waning gibbous',
+      title: 'Her waning gibbous',
+      body: 'Progesterone is up: the settling hormone. Warmer, sleepier, hungrier, more inward. The old framing calls this the gathering-in — harvest, not planting.',
+      invitation: 'Bring it home. Finish rather than start.',
+      affirmations: [
+        'This is the gathering-in week. You don’t have to start anything new — just bring home what’s already yours.',
+        'Slower isn’t worse. Progesterone is literally the settling hormone.',
+        'Make the evening small and warm. That’s not giving up on the day, that’s working with your body.',
+        'You’ve done enough this month. Let it be enough.',
+        'Nest. I’ll hold the rest of it from here.'
+      ]
+    },
+    lateLuteal: {
+      moon: 'Balsamic moon',
+      title: 'Her balsamic moon',
+      body: 'Both hormones falling fast — the hardest stretch of the month. The old framing calls this the thinning of the veil: the week the truth comes out of people, whether or not the timing is convenient.',
+      invitation: 'Whatever surfaces now is real. It’s just louder than usual.',
+      affirmations: [
+        'Whatever’s surfacing this week is real. It’s just louder than usual — and I’m listening to it either way.',
+        'You’re at the thinnest part of the month. Be as gentle with yourself as you’d be with anyone else running on empty.',
+        'You don’t have to be pleasant for me. You just have to be honest.',
+        'Nothing you say to me this week is going to cost you anything.',
+        'This is the last hard stretch before the dark moon. It passes. It always passes.'
+      ]
+    }
+  },
+
+  /* moon age on the day her bleed began → contemporary moon-cycle naming */
+  alignments: {
+    white: {
+      name: 'White Moon',
+      body: 'Her bleed lands near the new moon and her ovulation near the full — the pattern the old traditions call the White Moon cycle, and the one they associate with turning inward while the world is dark and outward when it is bright.'
+    },
+    red: {
+      name: 'Red Moon',
+      body: 'Her bleed lands near the full moon and her ovulation near the new — the Red Moon cycle in the old traditions, associated with the wise woman rather than the mother: energy pointed inward exactly when the world is loudest.'
+    },
+    pink: {
+      name: 'Waxing (Pink) Moon',
+      body: 'Her bleed begins while the moon is filling — the in-between pattern, called the Pink Moon in the traditions that name all four. Rest arriving while the sky is building.'
+    },
+    purple: {
+      name: 'Waning (Purple) Moon',
+      body: 'Her bleed begins while the moon is emptying — the Purple Moon in the traditions that name all four. Her body and the sky letting go at the same time.'
+    }
+  },
+
+  /* shared rituals, keyed by what the sky is doing — the point is simultaneity */
+  sky: {
+    new: {
+      title: 'New moon — the shared dark',
+      body: 'Nothing visible tonight, in both your countries. The oldest use of a new moon is release: name one thing each of you is putting down this month, send it to each other, and don’t discuss it. Same sky, same hour, nothing to explain.'
+    },
+    full: {
+      title: 'Full moon — the shared light',
+      body: 'The one object you can both look at from different countries, at the same moment, at its most obvious. Agree a time, both step outside, send a voice note from underneath it. Not a photo — a voice note.'
+    },
+    firstQuarter: {
+      title: 'First quarter — the halfway check',
+      body: 'Half lit, half dark, and building. Traditionally the "what needs pushing" night: ask her what she wants to have finished by the full moon, and take one piece of it off her hands from where you are.'
+    },
+    lastQuarter: {
+      title: 'Last quarter — the clearing',
+      body: 'Half lit and emptying. The clearing night: ask what she wants to be done with before the dark moon, and handle whatever part of it can be done by phone or card from abroad.'
+    },
+    other: {
+      title: 'Between the markers',
+      body: 'No quarter tonight. The standing version works anywhere: at an agreed hour you both go and look at the same moon and say what phase it’s in. Ten seconds. The point is that it’s the same object.'
+    }
+  },
+
+  /* everything you can do from another country, per cycle phase */
+  afar: {
+    menstrual: {
+      call: {
+        best: 'Short and early in her evening, before the pain and the day have both worn her out.',
+        avoid: 'Late-night calls on days 1–3, and long video calls when she’s in bed with cramps — a voice note she can answer lying down beats a call she has to perform on.'
+      },
+      messages: [
+        'Day one. You don’t have to talk to me today — just tell me what hurts and I’ll handle the rest from here.',
+        'I’ve ordered dinner to yours for 7. You don’t have to think about food today.',
+        'No plans, no replies needed. I just wanted the first message you saw today to be a kind one.',
+        'You are not behind on anything. This is the dark of the moon, and nothing is asked of the dark but rest.',
+        'Do you want company or quiet tonight? Both are completely fine — I just want to give you the right one.'
+      ],
+      acts: [
+        'Order a hot meal to her door for the evening of day 1 — soup or something she doesn’t have to chew through.',
+        'Send a grocery delivery: painkillers, heat patches, chocolate, pads or tampons in her brand, a bottle of something warm.',
+        'Pay for the taxi she’d otherwise skip — send the fare, or book the ride to and from work on days 1–3.',
+        'Book and pay for a cleaner for the hardest day, so the flat isn’t one more thing on her.',
+        'Ask a friend of hers, directly, to look in on day 2 — then tell her someone is coming so it isn’t a surprise.'
+      ]
+    },
+    follicular: {
+      call: {
+        best: 'Her evenings — energy and patience are both climbing, and this is when a long call actually lands.',
+        avoid: 'Nothing much. This is the stretch where a spontaneous call is welcome; save the heavy conversations for now rather than for her luteal week.'
+      },
+      messages: [
+        'The light’s coming back to you. What do you want to do with this week?',
+        'Tell me the thing you’ve been meaning to start. I want to hear the whole plan.',
+        'Book something for yourself this week — I’ll cover it. You’ve got the energy for it right now.',
+        'Whatever felt impossible last week is just a task again. That wasn’t weakness, it was the dark moon.',
+        'Can we do a proper call this week? Not a check-in — a real one.'
+      ],
+      acts: [
+        'Book the thing she keeps postponing — the class, the haircut, the appointment — and send her the confirmation.',
+        'Front the money for a plan with her friends this week, while her social battery is at its highest.',
+        'Handle one piece of admin she hates from your side: a bill, a renewal, a booking, a form.',
+        'Send the playlist for the week and ask for hers back. Cheap, and it runs all week in the background.',
+        'Plan the next time you’re in the same country and send her the dates. This is the phase where plans feel exciting rather than heavy.'
+      ]
+    },
+    ovulation: {
+      call: {
+        best: 'Late in her evening if you can manage the timezone — this is the warmest, most openly affectionate stretch of her month.',
+        avoid: 'Being unreachable. The distance is felt most sharply this week; a missed call now costs more than it does at any other point in the cycle.'
+      },
+      messages: [
+        'You’re at full moon. Go be seen — the room is lucky to have you in it.',
+        'I wish I were in the room tonight. You’re at your most magnetic right now and I know it from here.',
+        'Tell me what you’re wearing tonight. I want to picture it properly.',
+        'Say yes to the thing. This is the week your energy can carry it.',
+        'I miss you specifically — not the idea of you. You.'
+      ],
+      acts: [
+        'Send flowers to arrive on the day itself, not the day after — this is the peak, and it’s short.',
+        'Pay for her night out: the dinner, the cab home, the round for her friends.',
+        'Set a late call and actually protect it in your calendar, timezone and all.',
+        'Order something for her to open on camera while you’re both on the call.',
+        'Write the long message. Not a text — the long one. This is the week it will be received the way you mean it.'
+      ]
+    },
+    earlyLuteal: {
+      call: {
+        best: 'Early evening, wound down — she’s warmer and sleepier now, so aim for cosy rather than long.',
+        avoid: 'Stacking hard conversations into the back half of this phase. If something difficult needs saying, say it now rather than in her premenstrual week.'
+      },
+      messages: [
+        'This is the gathering-in week. You don’t have to start anything new — just bring home what’s already yours.',
+        'What’s the smallest thing I can take off your plate from here?',
+        'Make the evening small and warm tonight. I’ll be on the phone if you want company for it.',
+        'Slower isn’t worse. Progesterone is literally the settling hormone.',
+        'You’ve done enough this month. Let it be enough.'
+      ],
+      acts: [
+        'Order the comfort food she actually craves this week — carbs, warm, familiar. Don’t make it a health gesture.',
+        'Front-load her calendar for her: move what can be moved out of the week before her period.',
+        'Send a blanket, a hot water bottle, or the tea she likes — physical objects arriving from you do real work at distance.',
+        'Pay for the grocery delivery so she doesn’t carry bags home while she’s already tired.',
+        'Set up an evening film you both start at the same time on a call. Low effort, high presence.'
+      ]
+    },
+    lateLuteal: {
+      call: {
+        best: 'A short, low-demand call early in her evening, with no agenda and no logistics in it.',
+        avoid: 'Anything that sounds like a request. No plans, no decisions, no "we should talk" — and never a delayed reply to a sharp message. Distance turns silence into evidence this week.'
+      },
+      messages: [
+        'Whatever’s surfacing this week is real. It’s just louder than usual — and I’m listening to it either way.',
+        'No plans, no questions, nothing needed from you. Just checking you’ve eaten and telling you I love you.',
+        'You don’t have to be pleasant for me. You just have to be honest.',
+        'I’m not upset with you. I’m several countries away and still completely on your side.',
+        'This is the last hard stretch before the dark moon. It passes. It always passes.'
+      ],
+      acts: [
+        'Reply fast this week, even when the message is sharp. Speed reads as safety from this far away.',
+        'Order her food before she gets hungry rather than after — this is the phase where hunger turns into a mood.',
+        'Cancel or move the thing you’d planned that needs her energy, before she has to ask.',
+        'Send the painkillers and heat patches now so they arrive before day 1, not on it.',
+        'Send one photo of something ordinary from your day, with no question attached. Presence without a demand.'
+      ]
+    }
+  }
+};
+
+/* ============================================================================
    Attune — app.js (UI layer). Browser-safe IIFE; expects window.AttuneEngine,
    window.ATTUNE_CONTENT, window.Enso, and the theme/app CSS to be present.
    ========================================================================== */
@@ -2482,6 +2919,8 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
 
   var E = window.AttuneEngine;
   var C = window.ATTUNE_CONTENT;
+  var M = window.AttuneMoon;
+  var MC = window.ATTUNE_MOON_CONTENT;
 
   /* ------------------------------ constants ------------------------------ */
 
@@ -2505,8 +2944,8 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
     anxious: 0.38, withdrawn: 0.32, sad: 0.26, irritable: 0.22, pain: 0.12
   };
   var TABS = [
-    ['today', 'sun', 'Today'], ['log', 'calendar', 'Log'], ['map', 'chart', 'Map'],
-    ['tips', 'sprout', 'Tips'], ['settings', 'key', 'Settings']
+    ['today', 'sun', 'Today'], ['log', 'calendar', 'Log'], ['moon', 'moon-full', 'Moon'],
+    ['map', 'chart', 'Map'], ['tips', 'sprout', 'Tips'], ['settings', 'key', 'Settings']
   ];
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -2521,6 +2960,8 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
   var confirmClear = false;
   var confirmStart = false;    // two-step guard for "Her period started" (destructive)
   var showStartPicker = false;
+  var moonTab = 'moon';        // Moon screen sub-tab: 'moon' | 'afar'
+  var copied = null;           // key of the last copied message, for the button label
   var logMsg = null;           // inline message on the Log period card
   var saveFailed = false;      // last save() could not persist (quota/private mode)
   var lastBgKey = null;
@@ -2631,6 +3072,7 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
     var html;
     if (tab === 'today') html = viewToday(ph);
     else if (tab === 'log') html = viewLog(ph);
+    else if (tab === 'moon') html = viewMoon(ph);
     else if (tab === 'map') html = viewMap(ph);
     else if (tab === 'tips') html = viewTips(ph);
     else html = viewSettings(ph);
@@ -2642,6 +3084,225 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
         '</div></div></div>' + html;
     }
     document.getElementById('view').innerHTML = html;
+  }
+
+  /* ---------------------------- moon + afar ------------------------------ */
+
+  function moonNow() { return M.phaseOf(E.today()); }
+
+  function moonDisc(size, fraction) {
+    var R = 46;
+    return '<svg class="moon-disc" viewBox="-50 -50 100 100" width="' + size + '" height="' + size + '" aria-hidden="true">' +
+      '<circle cx="0" cy="0" r="' + R + '" class="moon-shadow"/>' +
+      '<path d="' + M.discPath(R, fraction) + '" class="moon-lit"/>' +
+      '<circle cx="0" cy="0" r="' + R + '" class="moon-rim"/></svg>';
+  }
+
+  function herZone() {
+    var z = state.settings && state.settings.herTimeZone;
+    return typeof z === 'string' ? z : '';
+  }
+
+  function zoneIsValid(z) {
+    try { new Intl.DateTimeFormat('en-GB', { timeZone: z }); return true; } catch (e) { return false; }
+  }
+
+  function zoneParts(zone) {
+    var p = new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone || undefined, hour: 'numeric', minute: 'numeric', hour12: false
+    }).formatToParts(new Date());
+    var o = {};
+    p.forEach(function (x) { o[x.type] = x.value; });
+    return { h: +o.hour % 24, m: +o.minute };
+  }
+
+  // "21:40 · 3 hours ahead of you" — null when no zone is set or it is invalid
+  function herClock() {
+    var z = herZone();
+    if (!z) return null;
+    try {
+      var her = zoneParts(z);
+      var you = zoneParts(Intl.DateTimeFormat().resolvedOptions().timeZone);
+      var diff = (her.h * 60 + her.m) - (you.h * 60 + you.m);
+      while (diff > 720) diff -= 1440;
+      while (diff <= -720) diff += 1440;
+      var hrs = Math.round(Math.abs(diff) / 60 * 10) / 10;
+      var rel = diff === 0 ? 'same time as you'
+        : hrs + (hrs === 1 ? ' hour ' : ' hours ') + (diff > 0 ? 'ahead of you' : 'behind you');
+      return {
+        time: (her.h < 10 ? '0' : '') + her.h + ':' + (her.m < 10 ? '0' : '') + her.m,
+        rel: rel,
+        hour: her.h
+      };
+    } catch (e) { return null; }
+  }
+
+  // Live read on her clock: is right now a moment to call, or not. The phase
+  // caveat matters more than the hour on her hardest days.
+  function callNow(hour, phaseKey) {
+    var out;
+    if (hour >= 23 || hour < 7) out = { tone: 'warn', text: 'Middle of the night where she is. Send it as a message she wakes up to.' };
+    else if (hour < 9) out = { tone: 'ok', text: 'Early morning her time — short and warm beats long.' };
+    else if (hour < 12) out = { tone: 'ok', text: 'Morning her time.' };
+    else if (hour < 18) out = { tone: '', text: 'Her working day — expect a short answer, or none.' };
+    else if (hour < 22) out = { tone: 'ok', text: 'Her evening. The best window most days.' };
+    else out = { tone: '', text: 'Late her time. Keep it short.' };
+    if ((phaseKey === 'menstrual' || phaseKey === 'lateLuteal') && (hour >= 21 || hour < 9)) {
+      out.tone = 'warn';
+      out.text += ' On these days a voice note she can answer lying down beats a call she has to sit up for.';
+    }
+    return out;
+  }
+
+  // the day's pick out of a list, rotating so Today doesn't repeat itself
+  function daily(list, salt) {
+    if (!list || !list.length) return null;
+    var off = (E.diffDays('2026-01-01', E.today()) + (salt || 0)) % list.length;
+    return list[(off + list.length) % list.length];
+  }
+
+  function copyRow(key, text, label) {
+    var isCopied = copied === key;
+    return '<div class="copy-row">' +
+      '<div class="copy-text" id="copy-' + key + '">' + esc(text) + '</div>' +
+      '<button class="glass-pill copy-btn' + (isCopied ? ' sel' : '') + '" data-copy="' + key + '">' +
+      g(isCopied ? 'check' : 'speech', 14) + ' ' + (isCopied ? 'Copied' : (label || 'Copy')) + '</button></div>';
+  }
+
+  function skyRitualKey(mp) {
+    if (mp.key === 'new' || mp.key === 'full') return mp.key;
+    if (mp.key === 'firstQuarter' || mp.key === 'lastQuarter') return mp.key;
+    return 'other';
+  }
+
+  function viewMoon(ph) {
+    var mp = moonNow();
+    var arche = MC.archetypes[ph.key];
+    var h = '<div class="screen-title"><h2>Moon</h2><div class="t-small">Her cycle and the sky, side by side — and what you can do from where you are.</div></div>';
+
+    h += '<div class="filter-row">' +
+      '<button class="glass-pill' + (moonTab === 'moon' ? ' sel' : '') + '" data-moontab="moon" id="mt-moon">' + g('moon-full', 14) + ' Tonight’s moon</button>' +
+      '<button class="glass-pill' + (moonTab === 'afar' ? ' sel' : '') + '" data-moontab="afar" id="mt-afar">' + g('compass', 14) + ' From afar</button>' +
+      '</div>';
+
+    return h + (moonTab === 'afar' ? moonAfarSection(ph) : moonSkySection(ph, mp, arche));
+  }
+
+  function moonSkySection(ph, mp, arche) {
+    var toFull = M.daysUntil(E.today(), 'full');
+    var toNew = M.daysUntil(E.today(), 'new');
+    var pct = Math.round(mp.illumination * 100);
+
+    var h = '<div class="glass-card accent"><div class="moon-hero">' +
+      moonDisc(96, mp.cycleFraction) +
+      '<div><div class="t-label">Tonight’s sky</div>' +
+      '<div class="phase-name" style="font-size:1.5rem">' + esc(mp.label) + '</div>' +
+      '<div class="t-small">' + pct + '% lit · ' + (mp.waxing ? 'waxing' : 'waning') + '</div></div></div>' +
+      '<div class="t-small t-faint" style="margin-top:10px">' +
+      (toFull === 0 ? 'Full moon tonight.' : 'Full moon in ' + toFull + ' day' + (toFull === 1 ? '' : 's') + '.') + ' ' +
+      (toNew === 0 ? 'New moon tonight.' : 'New moon in ' + toNew + ' day' + (toNew === 1 ? '' : 's') + '.') +
+      '</div></div>';
+
+    if (arche) {
+      h += '<div class="glass-card"><div class="glass-row" style="border:none;padding:0 0 6px">' +
+        '<div class="row-glyph icon-accent">' + g(PHASE_GLYPH[ph.key], 30) + '</div>' +
+        '<div><div class="t-label">' + esc(arche.moon) + '</div><strong>' + esc(arche.title) + '</strong></div></div>' +
+        '<p class="t-body">' + esc(arche.body) + '</p>' +
+        '<div class="pms-frame" style="margin-top:10px">' + esc(arche.invitation) + '</div></div>';
+    }
+
+    /* alignment — only meaningful once a real start is logged */
+    var anchor = ph.cycleStart;
+    var isReal = false;
+    E.effectivePeriods(state).forEach(function (p) {
+      if (p.start === anchor && (p.source === 'confirmed' || p.source === 'inferred')) isReal = true;
+    });
+    if (anchor && isReal) {
+      var al = MC.alignments[M.alignmentKey(anchor)];
+      var dr = M.drift(anchor, state.settings.cycleLength);
+      h += '<div class="glass-card"><div class="t-label">' + esc(al.name) + '</div>' +
+        '<p class="t-body" style="margin-top:6px">' + esc(al.body) + '</p>';
+      if (dr.perCycle && Math.abs(dr.perCycle) >= 0.05) {
+        var dir = dr.perCycle < 0 ? 'earlier' : 'later';
+        var step = Math.round(Math.abs(dr.perCycle) * 10) / 10;
+        var nx = dr.nextChange;
+        h += '<hr class="divider"><div class="t-small" style="color:var(--text-dim)">' +
+          'This is a drift, not a lock. Her cycle runs ' + state.settings.cycleLength +
+          ' days against the moon’s 29.5, so her bleed lands about ' + step + ' day' + (step === 1 ? '' : 's') +
+          ' ' + dir + ' around the moon every cycle. ' +
+          (nx ? 'In roughly ' + nx.cycles + ' cycle' + (nx.cycles === 1 ? '' : 's') + ' it moves into the ' +
+            MC.alignments[nx.key].name + ' pattern' +
+            (dr.cyclesToReturn ? ', and back to this one after about ' + dr.cyclesToReturn + '.' : '.') : '') +
+          '</div>';
+      }
+      h += '</div>';
+    } else {
+      h += '<div class="glass-card"><div class="t-label">Her moon pattern</div>' +
+        '<p class="t-body" style="margin-top:6px">Log a real period start and this fills in — which moon her bleed lands on, and how fast it drifts.</p>' +
+        '<button class="glass-btn small" data-nav="log">' + g('calendar', 14) + ' Go to Log</button></div>';
+    }
+
+    /* shared ritual across the distance */
+    var mp2 = moonNow();
+    var rit = MC.sky[skyRitualKey(mp2)];
+    h += '<div class="glass-card"><div class="glass-row" style="border:none;padding:0 0 6px">' +
+      '<div class="row-glyph icon-accent">' + g('candle', 30) + '</div>' +
+      '<div><div class="t-label">Same sky, different country</div><strong>' + esc(rit.title) + '</strong></div></div>' +
+      '<p class="t-body">' + esc(rit.body) + '</p></div>';
+
+    /* affirmations, phase-matched, ready to send */
+    if (arche && arche.affirmations.length) {
+      h += '<div class="glass-card"><div class="t-label">Affirmations for this phase</div>' +
+        '<div class="t-small t-faint" style="margin-bottom:8px">Written to be sent as they are.</div>' +
+        arche.affirmations.map(function (a, i) { return copyRow('af' + i, a); }).join('') + '</div>';
+    }
+
+    h += '<div class="glass-card tone-note"><div class="glass-row" style="border:none;padding:0">' +
+      '<div class="row-glyph tone-warn">' + g('warning', 30) + '</div><div>' +
+      '<div class="t-label">What this is</div>' +
+      '<div class="t-small" style="color:var(--text-dim)">' + esc(MC.framing) + '</div></div></div></div>';
+
+    return h;
+  }
+
+  function moonAfarSection(ph) {
+    var af = MC.afar[ph.key];
+    var clock = herClock();
+    var h = '';
+
+    h += '<div class="glass-card accent"><div class="t-label">Calling her</div>';
+    if (clock) {
+      var now = callNow(clock.hour, ph.key);
+      h += '<div class="countdown-row"><span class="t-num t-accent">' + esc(clock.time) + '</span>' +
+        '<span class="t-num-sub">her time · ' + esc(clock.rel) + '</span></div>' +
+        '<div class="glass-row" style="padding-top:10px"><div class="row-glyph' +
+        (now.tone === 'warn' ? ' tone-warn' : now.tone === 'ok' ? ' icon-accent' : '') + '">' +
+        g(now.tone === 'warn' ? 'warning' : now.tone === 'ok' ? 'check' : 'bell', 26) + '</div>' +
+        '<div><div class="t-label">Right now</div><div class="t-small">' + esc(now.text) + '</div></div></div>';
+    } else {
+      h += '<p class="t-body" style="margin-top:6px">Set her timezone in Settings and this shows her local time, so you stop doing the arithmetic in your head.</p>' +
+        '<button class="glass-btn small" data-nav="settings">' + g('key', 14) + ' Open Settings</button>';
+    }
+    if (af) {
+      h += '<div class="glass-row" style="padding-top:10px"><div class="row-glyph icon-accent">' + g('check', 26) + '</div>' +
+        '<div><div class="t-label">Best</div><div class="t-small">' + esc(af.call.best) + '</div></div></div>' +
+        '<div class="glass-row"><div class="row-glyph tone-warn">' + g('warning', 26) + '</div>' +
+        '<div><div class="t-label">Avoid</div><div class="t-small">' + esc(af.call.avoid) + '</div></div></div>';
+    }
+    h += '</div>';
+
+    if (af) {
+      h += '<div class="glass-card"><div class="t-label">Send her this</div>' +
+        '<div class="t-small t-faint" style="margin-bottom:8px">Matched to the phase she’s in today.</div>' +
+        af.messages.map(function (m, i) { return copyRow('ms' + i, m); }).join('') + '</div>';
+
+      h += '<div class="glass-card"><div class="t-label">Arrange from where you are</div>' +
+        af.acts.map(function (a) {
+          return '<div class="glass-row"><div class="row-glyph icon-accent">' + g('gift', 26) + '</div><div>' + esc(a) + '</div></div>';
+        }).join('') + '</div>';
+    }
+
+    return h;
   }
 
   /* ------------------------------- TODAY --------------------------------- */
@@ -2707,6 +3368,15 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
       (pms ? '<div class="pms-frame">Patience mode: lead with de-escalation and reassurance. It’s the hormones talking, not her heart — don’t take the bait, don’t take it personally.</div>' : '') +
       '</div>';
 
+    /* the sky tonight, next to the phase she's in — taps through to Moon */
+    var mpT = moonNow();
+    var archeT = MC.archetypes[ph.key];
+    h += '<a class="glass-card moon-strip" data-nav="moon" id="moonStrip">' +
+      moonDisc(44, mpT.cycleFraction) +
+      '<div><div class="t-label">' + esc(mpT.label) + ' · ' + Math.round(mpT.illumination * 100) + '% lit</div>' +
+      '<div class="t-small">' + (archeT ? esc(archeT.title) : 'Her inner moon') + '</div></div>' +
+      '<div class="row-glyph icon-accent">' + g('arrow-right', 20) + '</div></a>';
+
     if (P) {
       h += '<div class="glass-card accent"><div class="t-label">What’s happening in her body</div>' +
         '<p class="t-body" style="margin-top:6px">' + esc(P.bodyNow) + '</p>' +
@@ -2723,6 +3393,26 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
 
       h += '<div class="glass-card"><div class="t-label">Top 3 things you can do today</div>' +
         rotatingTips(ph.key).map(tipRow).join('') + '</div>';
+    }
+
+    /* long-distance card: one message, one act, one call note — the full set
+       lives on the Moon screen under "From afar" */
+    var afT = MC.afar[ph.key];
+    if (afT) {
+      var clockT = herClock();
+      var msgT = daily(afT.messages, 0);
+      var actT = daily(afT.acts, 3);
+      h += '<div class="glass-card"><div class="glass-row" style="border:none;padding:0 0 6px">' +
+        '<div class="row-glyph icon-accent">' + g('compass', 30) + '</div>' +
+        '<div><div class="t-label">From afar today</div>' +
+        (clockT ? '<div class="t-small">Her time ' + esc(clockT.time) + ' · ' + esc(clockT.rel) + '</div>'
+                : '<div class="t-small">Set her timezone in Settings for call timing.</div>') +
+        '</div></div>' +
+        copyRow('td', msgT, 'Copy') +
+        '<div class="glass-row"><div class="row-glyph icon-accent">' + g('gift', 26) + '</div><div>' + esc(actT) + '</div></div>' +
+        '<div class="glass-row" style="border:none"><div class="row-glyph">' + g('bell', 26) + '</div>' +
+        '<div><div class="t-label">Calls</div><div class="t-small">' + esc(afT.call.best) + '</div></div></div>' +
+        '<button class="glass-btn small" data-nav="moon" data-moontab="afar">' + g('arrow-right', 14) + ' More from afar</button></div>';
     }
 
     h += '<div class="stack-btns">' +
@@ -3075,6 +3765,31 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
       '<div class="setting-row"><span>Luteal length (days)</span><input type="number" step="1" min="9" max="17" class="glass-input num-input" id="set-lutealLength" data-setting="lutealLength" value="' + s.lutealLength + '"></div>' +
       '<div class="t-small t-faint">Used until enough real cycles are logged; ovulation = next period − luteal length.</div></div>';
 
+    /* distance: her timezone drives call timing on Today and the Moon screen */
+    var zoneList = null;
+    try {
+      if (typeof Intl.supportedValuesOf === 'function') zoneList = Intl.supportedValuesOf('timeZone');
+    } catch (e) { zoneList = null; }
+    var cur = herZone();
+    var clockS = herClock();
+    h += '<div class="glass-card"><div class="t-label">Distance</div>' +
+      '<div class="t-small t-faint" style="margin-bottom:8px">Where she is. The app does the timezone arithmetic so you stop calling at 3am.</div>';
+    if (zoneList && zoneList.length) {
+      if (cur && zoneList.indexOf(cur) < 0) zoneList = [cur].concat(zoneList);
+      h += '<div class="field"><select class="glass-input" id="set-tz" data-tz="1">' +
+        '<option value=""' + (cur ? '' : ' selected') + '>Not set — same as yours</option>' +
+        zoneList.map(function (z) {
+          return '<option value="' + esc(z) + '"' + (z === cur ? ' selected' : '') + '>' + esc(z.replace(/_/g, ' ')) + '</option>';
+        }).join('') + '</select></div>';
+    } else {
+      h += '<div class="field"><input class="glass-input" id="set-tz" data-tz="1" autocomplete="off" placeholder="Europe/Paris" value="' + esc(cur) + '"></div>';
+    }
+    if (clockS) {
+      h += '<div class="setting-row"><span>Her time now</span><strong>' + esc(clockS.time) + '</strong></div>' +
+        '<div class="t-small t-faint">' + esc(clockS.rel) + '</div>';
+    }
+    h += '</div>';
+
     /* her name + profile patterns editor */
     h += '<div class="glass-card"><div class="t-label">' + esc(patternsLabel()) + '</div>' +
       '<div class="setting-row"><span>Her name</span>' +
@@ -3125,6 +3840,31 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
     if (flow && flow.step === 'details') {
       var n = document.getElementById('ci-note');
       if (n) flow.note = n.value;
+    }
+  }
+
+  // Clipboard write, with the pre-async-API fallback for older mobile Safari.
+  // Either way the button flips to "Copied" on the next render.
+  function copyToClipboard(text, key) {
+    var done = function () { copied = key; render(); };
+    var legacy = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      try { document.execCommand('copy'); } catch (e) { /* nothing else to try */ }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { legacy(); done(); });
+    } else {
+      legacy();
+      done();
     }
   }
 
@@ -3215,16 +3955,27 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
   };
 
   document.addEventListener('click', function (ev) {
-    var el = ev.target.closest('[data-nav],[data-action],[data-mood],[data-symptom],[data-severity],[data-fphase],[data-fcat],[data-delpattern],[data-delperiod]');
+    var el = ev.target.closest('[data-nav],[data-action],[data-mood],[data-symptom],[data-severity],[data-fphase],[data-fcat],[data-delpattern],[data-delperiod],[data-moontab],[data-copy]');
     if (!el) return;
 
     syncFlowInputs();
 
     if (el.hasAttribute('data-nav')) {
       tab = el.getAttribute('data-nav');
+      if (el.hasAttribute('data-moontab')) moonTab = el.getAttribute('data-moontab');
       if (tab !== 'log') flow = null;
       confirmClear = false; confirmStart = false; settingsMsg = null; logMsg = null;
+      copied = null;
       window.scrollTo(0, 0);
+    } else if (el.hasAttribute('data-moontab')) {
+      moonTab = el.getAttribute('data-moontab');
+      copied = null;
+      window.scrollTo(0, 0);
+    } else if (el.hasAttribute('data-copy')) {
+      var ck = el.getAttribute('data-copy');
+      var src = document.getElementById('copy-' + ck);
+      if (src) copyToClipboard(src.textContent, ck);
+      return;   // copyToClipboard re-renders once the write resolves
     } else if (el.hasAttribute('data-mood')) {
       flow.mood = el.getAttribute('data-mood');
       flow.step = 'details';
@@ -3279,6 +4030,18 @@ window.ATTUNE_CONTENT.phases.lateLuteal = {
       } else {
         t.value = state.settings[key]; // reject nonsense, restore stored value
       }
+    } else if (t && t.hasAttribute && t.hasAttribute('data-tz')) {
+      var z = String(t.value == null ? '' : t.value).trim();
+      if (z && !zoneIsValid(z)) {
+        settingsMsg = { text: 'That timezone isn’t one this phone recognises — try a name like Europe/Paris.', tone: 'err' };
+        t.value = herZone();
+      } else {
+        var nextZ = JSON.parse(JSON.stringify(state));
+        nextZ.settings.herTimeZone = z;
+        commit(nextZ);
+        settingsMsg = z ? { text: 'Her timezone set — call timing is live now.', tone: 'ok' } : null;
+      }
+      render();
     } else if (t && t.hasAttribute && t.hasAttribute('data-profile')) {
       var nextP = JSON.parse(JSON.stringify(state));
       nextP.profile.name = String(t.value == null ? '' : t.value).trim().slice(0, 24);
