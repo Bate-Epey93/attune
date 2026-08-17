@@ -1,6 +1,6 @@
 /* Attune service worker — cache-first, fully offline. */
 'use strict';
-var CACHE = 'attune-v3';
+var CACHE = 'attune-v4';
 var ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {

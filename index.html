@@ -804,6 +804,18 @@ button.pill-x {
   add('lotus', { s: [{ p: [[50, 32], [58, 46], [50, 64], [42, 46], [50, 34]], w: 6 }, { p: [[24, 60], [34, 42], [47, 58]], w: 6 }, { p: [[76, 60], [66, 42], [53, 58]], w: 6 }, { p: [[26, 68], [50, 78], [74, 68]], w: 7 }] });
   add('meditate', { s: [{ p: [[30, 72], [36, 54], [50, 48], [64, 54], [70, 72]], w: 9 }, { p: [[26, 76], [74, 76]], w: 6 }], d: [[50, 32, 7.5]] });
   add('spiral', { s: [{ p: [[52, 48], [58, 54], [50, 60], [42, 52], [48, 40], [62, 40], [68, 58], [50, 72], [30, 60], [28, 38]], w: 6 }] });
+  /* the app mark: a woman seated in lotus, held inside an ensō. Same geometry
+     as icon-192/512, so the home-screen icon and the in-app mark are one thing. */
+  add('lotus-woman', {
+    enso: { R: 38, w: 7, gap: 0.62, rot: -1.15, wob: 1.9 },
+    s: [
+      { p: [[50, 42], [39, 58], [31, 71]], w: 6, taper: 'both' },
+      { p: [[50, 42], [61, 58], [69, 71]], w: 6, taper: 'both' },
+      { p: [[30, 72], [50, 77.5], [70, 72]], w: 5.6, taper: 'both' },
+      { p: [[34, 71.5], [50, 68], [66, 71.5]], w: 4.2, taper: 'both' }
+    ],
+    d: [[50, 34, 6.4], [57.5, 26.5, 3.6]]
+  });
 
   /* faces — all 16 */
   add('face-joy', { enso: FACE_RING, s: [smile()], d: eyes() });
@@ -3828,7 +3840,7 @@ window.ATTUNE_MOON_CONTENT = {
 
     /* about + disclaimer */
     h += '<div class="glass-card"><div class="glass-row" style="border:none;padding:0 0 6px">' +
-      '<div class="row-glyph icon-accent">' + g('enso', 30) + '</div><div><strong>Attune</strong>' +
+      '<div class="row-glyph icon-accent">' + g('lotus-woman', 34) + '</div><div><strong>Attune</strong>' +
       '<div class="t-small">A partner-side cycle companion — built for you, about her.</div></div></div>' +
       '<div class="t-small" style="color:var(--text-dim)">' + esc(C.general.disclaimer) + '</div></div>';
     return h;
